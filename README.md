@@ -10,6 +10,7 @@ A chord based distributed hash table (DHT) built using Android as the distribute
   •	The simpledht-grading.linux script is present in app/build/outputs so give the path accordingly
 
   For more information about the grading script, run ./simpledht-grading.linux -h
+  
   Implementation
   •	Implemented three things: 1) ID space partitioning/re-partitioning, 2) Ring-based routing, and 3) Node joins.
   •	The content provider should implement all DHT functionalities and support insert and query operations. Thus, if you run multiple instances of your app, all content provider instances should form a Chord ring and serve insert/query requests in a distributed fashion according to the Chord protocol.
