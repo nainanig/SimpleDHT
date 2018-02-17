@@ -13,6 +13,7 @@ import android.util.Log;
 import java.io.BufferedReader;
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
+import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
@@ -47,17 +48,74 @@ public class SimpleDhtProvider extends ContentProvider {
 
 
     @Override
+    /* The delete function checks for three conditions : 1. if * is given as the selection parameter then delete all <key,value> pairs
+    stored in entire DHT,
+    2. if @ is given as the selection parameter then delete all <key,value> pairs stored in the
+    local partiton of the node on which delete() was requested,
+    3. if a key value is given as the selection parameter then first find where that key is stored then delete that <key,value> pair.
+
+    The count variable stores the number of key(s) that have been deleted to check if the required number of key(s) has been deleted or not.
+    This is validate the success of delete() method.
+    */
     public int delete(Uri uri, String selection, String[] selectionArgs) {
         // TODO Auto-generated method stub
+
+        Context c = this.getContext();
+        String files[] = c.fileList();
+        if (selection.equals("@") || selection.equals("/@/")) {
+            try {
+                int count = 0;
+                for (String file : files) {
+                    File d = getContext().getFilesDir();
+                    File f = new File(d, file);
+                    boolean del = f.delete();
+
+                    if (del) {
+                        count += 1;
+                    }
+
+                }
+                return count;
+            } catch (Exception e) {
+                Log.e("Delete", "failed");
+            }
+        } else if (!selection.equals("@") || !selection.equals("*")) {
+            if (c.deleteFile(selection)) {
+                return 1;
+            }
+        } else {
+
+            try {
+                int count = 0;
+                for (String file : files) {
+                    File d = getContext().getFilesDir();
+                    File f = new File(d, file);
+                    boolean del = f.delete();
+
+                    if (del) {
+                        count += 1;
+                    }
+
+
+                }
+                return count;
+            } catch (Exception e) {
+                Log.e("Delete", "failed");
+            }
+
+        }
         return 0;
+
     }
 
-        @Override
+    @Override
     public String getType(Uri uri) {
         // TODO Auto-generated method stub
         return null;
     }
 
+    /* The task of insert() is to find out the correct partition for the key which is to be inserted and
+    then store the <key,value> pair in the correct node */
     @Override
     public Uri insert(Uri uri, ContentValues values) {
         // TODO Auto-generated method stub
@@ -67,8 +125,9 @@ public class SimpleDhtProvider extends ContentProvider {
             String KEY = values.getAsString("key");
             String value = values.getAsString("value");
             String key_hash = genHash(KEY);
+            //first check if the key to be inserted lies in the partition of current node on which insert request has been send then forward the request
+            //in the circular way to all the other nodes and repeat the process
             if (successor_node.equals("") && predecessor_node.equals("")) {
-
                 outputStream = getContext().openFileOutput(KEY, Context.MODE_PRIVATE);
                 outputStream.write(values.getAsString("value").getBytes());
                 outputStream.close();
@@ -105,6 +164,7 @@ public class SimpleDhtProvider extends ContentProvider {
     }
 
     @Override
+    // According to the given problem statement all the node join requests are send to node with port number 5554
     public boolean onCreate() {
         // TODO Auto-generated method stub
 
@@ -128,7 +188,7 @@ public class SimpleDhtProvider extends ContentProvider {
             e.printStackTrace();
         }
         myPort = String.valueOf((Integer.parseInt(portStr) * 2));
-
+        // Sending the Join request in form of a message to the client task of initial node 5554
         if (!myPort.equals("11108")) {
             String msg = myPort + ":" + " " + ":" + " " + ":" + "JoinRequest" + ":" + " " + ":" + " " + ":" + " ";
             successor_node = "";
@@ -137,9 +197,9 @@ public class SimpleDhtProvider extends ContentProvider {
         }
         return false;
     }
-
+    //serverQuery() is the method that facilitates "*"query as well as query for a key which is not present
+    // on the originating node (on which query() was made)
     private String serverQuery(String selection, String originating_node) {
-
         String received = null;
         Log.d("InsideServerQuery", selection);
         try {
@@ -205,22 +265,15 @@ public class SimpleDhtProvider extends ContentProvider {
                     InputStreamReader isr = new InputStreamReader(fis, "UTF-8");
                     BufferedReader bufferedReader = new BufferedReader(isr);
                     s = bufferedReader.readLine();
-
-
                     fis.close();
                     isr.close();
                     bufferedReader.close();
-
-
                 } catch (IOException e) {
                     e.printStackTrace();
                 } catch (NullPointerException n) {
                     n.printStackTrace();
                 }
-
                 String key_value = selection + ":" + s;
-
-
                 Log.d("type itself", myPort + s + selection);
 
 
@@ -232,8 +285,6 @@ public class SimpleDhtProvider extends ContentProvider {
                     InputStreamReader isr = new InputStreamReader(fis, "UTF-8");
                     BufferedReader bufferedReader = new BufferedReader(isr);
                     s = bufferedReader.readLine();
-
-
                     fis.close();
                     isr.close();
                     bufferedReader.close();
@@ -244,17 +295,15 @@ public class SimpleDhtProvider extends ContentProvider {
                 } catch (NullPointerException n) {
                     n.printStackTrace();
                 }
-                // cursor.addRow(new String[]{selection, s});
 
                 String key_value = selection + ":" + s;
-                //cursor.setNotificationUri(getContext().getContentResolver(), uri);
                 Log.d("type last node", selection + " " + s);
 
                 return key_value;
             } else {
                 if (!successor_node.equals(originating_node)) {
                     String temp = successor_node;
-                    String key = "", value = "";
+                    //String key = "", value = "";
                     Log.d("in last while", myPort + temp);
                     Socket socket = new Socket(InetAddress.getByAddress(new byte[]{10, 0, 2, 2}), Integer.parseInt(temp) * 2);
                     Log.d("Successor", successor_node);
@@ -282,6 +331,13 @@ public class SimpleDhtProvider extends ContentProvider {
         return null;
     }
 
+    /*
+    For query() also three types of cases are implemented: 1. If a single "key" is given as selection parameter then the current node checks for the key
+    in its local partition, if not found then it forwards the query to successive nodes in the ring, the node which has the key returns the <key,value> pair
+    to the node on which request was made and it replies back with the result,
+    2. If "@" is the selection parameter then the originating node on which query was made has to return all the <key,value> pairs stored on it locally
+    3. If "*" query is the selection parameter then the originating node has to return all the <key,value> pairs stored in the entire DHT
+     */
     @Override
     public Cursor query(Uri uri, String[] projection, String selection, String[] selectionArgs,
                         String sortOrder) {
@@ -298,22 +354,14 @@ public class SimpleDhtProvider extends ContentProvider {
 
                     String str = "";
                     for (int i = 0; i < files.length; i++) {
-
-
                         FileInputStream fis = getContext().openFileInput(files[i]);
                         InputStreamReader isr = new InputStreamReader(fis, "UTF-8");
                         BufferedReader br = new BufferedReader(isr);
-
                         str = br.readLine();
-
                         fis.close();
                         isr.close();
-
                         cursor.addRow(new String[]{files[i], str});
-
                         Log.d("type1", " Value :" + str + " retrieved for key :" + files[i]);
-
-
                     }
                 } else {
                     String s = "";
@@ -322,8 +370,6 @@ public class SimpleDhtProvider extends ContentProvider {
                         InputStreamReader isr = new InputStreamReader(fis, "UTF-8");
                         BufferedReader bufferedReader = new BufferedReader(isr);
                         s = bufferedReader.readLine();
-
-
                         fis.close();
                         isr.close();
                         bufferedReader.close();
@@ -335,14 +381,9 @@ public class SimpleDhtProvider extends ContentProvider {
                         n.printStackTrace();
                     }
                     cursor.addRow(new String[]{selection, s});
-
-
                     cursor.setNotificationUri(getContext().getContentResolver(), uri);
                     Log.d("type2", selection + s);
-
-
                 }
-
                 return cursor;
             } else if (selection.equals("@")) {
                 String[] files = getContext().fileList();
@@ -465,7 +506,7 @@ public class SimpleDhtProvider extends ContentProvider {
                 return cursor;
             } else {
                 String temp = successor_node;
-                String key = "", value = "";
+                //String key = "", value = "";
 
                 Log.d("in last while", myPort + temp);
                 Socket socket = new Socket(InetAddress.getByAddress(new byte[]{10, 0, 2, 2}), Integer.parseInt(temp) * 2);
@@ -477,22 +518,10 @@ public class SimpleDhtProvider extends ContentProvider {
                 String rec = in.readUTF();
                 socket.close();
                 String received[] = rec.split(":");
-                //Log.d("Reached to server", str);
+
                 Log.d("response", rec);
                 cursor.addRow(new String[]{received[0], received[1]});
 
-            /*    if(originating_node.equals(temp)){
-                    Socket socket = new Socket(InetAddress.getByAddress(new byte[]{10, 0, 2, 2}), Integer.parseInt(temp));
-                    String to_server=temp+":"+""+":"+""+":"+"send to origin"+":"+key+":"+value;
-                    DataOutputStream out=new DataOutputStream(socket.getOutputStream());
-                    out.writeUTF(to_server);
-                    DataInputStream in=new DataInputStream(socket.getInputStream());
-                    String from_server[]=in.readUTF().split(":");
-                    cursor.addRow(new String[]{from_server[1],from_server[2]});
-                    Log.d("returning to orgin",temp);*/
-
-
-                //Log.d("in last else",cursor.getString(cursor.getColumnIndex("key")));
                 return cursor;
 
             }
@@ -542,7 +571,8 @@ public class SimpleDhtProvider extends ContentProvider {
                     String from_client = in.readUTF();
 
                     String[] msg = from_client.split(":");
-
+                    //Once a join request is received that node is added to the ring and its successor and predecessor are computed
+                    // the successor and predecessor are sent to the node in form of an Updated message string
                     if (msg[3].equals("JoinRequest")) {
 
                         portnum = Integer.parseInt(msg[0]) / 2;
@@ -564,13 +594,14 @@ public class SimpleDhtProvider extends ContentProvider {
                                 predecessor = arranger[i - 1];
                             }
                             int port = Integer.parseInt(arranger[i]) * 2;
-                            String msg_to_request = String.valueOf(port) + ":" + successor + ":" + predecessor + ":" + "updated" + ":" + " " + ":" + " " + " ";
+                            String msg_to_request = String.valueOf(port) + ":" + successor + ":" + predecessor + ":" + "Updated" + ":" + " " + ":" + " " + " ";
                             publishProgress(msg_to_request);
 
                         }
 
-                    } else if (msg[3].equals("REplied")) {
+                    }
 
+                    else if (msg[3].equals("Replied")) {
                         successor_node = msg[1];
                         predecessor_node = msg[2];
                         predecessor_hash = genHash(predecessor_node);
@@ -578,7 +609,9 @@ public class SimpleDhtProvider extends ContentProvider {
                         out_of_server.writeUTF("Acknowledgement");
                         out_of_server.flush();
                         socket.close();
-                    } else if (msg[3].equals("insert")) {
+                    }
+
+                    else if (msg[3].equals("insert")) {
                         String key = msg[4];
                         String val = msg[5];
                         Uri.Builder uriBuilder = new Uri.Builder();
@@ -589,7 +622,8 @@ public class SimpleDhtProvider extends ContentProvider {
                         cv.put(VALUE_FIELD, val);
                         Uri uri = uriBuilder.build();
                         insert(uri, cv);
-                    } else if (msg[3].equals("query")) {
+                    }
+                    else if (msg[3].equals("query")) {
 
                         String response = serverQuery(msg[4], msg[5]);
                         out_of_server.writeUTF(response);
@@ -597,13 +631,15 @@ public class SimpleDhtProvider extends ContentProvider {
                         socket.close();
 
 
-                    } else if (msg[3].equals("individual key query")) {
+                    }
+                    else if (msg[3].equals("individual key query")) {
                         String response = serverQuery(msg[4], msg[5]);
                         out_of_server.writeUTF(response);
                         out_of_server.flush();
                         socket.close();
 
-                    } else if (msg[3].equals("send to origin")) {
+                    }
+                    else if (msg[3].equals("send to origin")) {
                         String str = myPort + ":" + msg[4] + ":" + msg[5];
                         out_of_server.writeUTF(str);
                         out_of_server.flush();
@@ -620,14 +656,12 @@ public class SimpleDhtProvider extends ContentProvider {
         }
 
         protected void onProgressUpdate(String... strings) {
-
-
             String strReceived = strings[0].trim();
             String to_send[] = strReceived.split(":");
-            if (to_send[3].equals("updated")) {
+            if (to_send[3].equals("Updated")) {
                 new NodeJoinRequest().executeOnExecutor(AsyncTask.SERIAL_EXECUTOR, strReceived);
             }
-            if (to_send[3].equals("REplied")) {
+            if (to_send[3].equals("Replied")) {
                 new NodeJoinRequest().executeOnExecutor(AsyncTask.SERIAL_EXECUTOR, strReceived);
             }
         }
@@ -650,12 +684,12 @@ public class SimpleDhtProvider extends ContentProvider {
                         DataOutputStream out = new DataOutputStream(socket.getOutputStream());
                         out.writeUTF(msg);
 
-                    } else if (msg_break[3].equals("updated")) {
+                    } else if (msg_break[3].equals("Updated")) {
                         String port = msg_break[0];
                         Socket socket = new Socket(InetAddress.getByAddress(new byte[]{10, 0, 2, 2}),
                                 Integer.parseInt(port));
                         DataOutputStream to_server = new DataOutputStream(socket.getOutputStream());
-                        String to_port = msg_break[0] + ":" + msg_break[1] + ":" + msg_break[2] + ":" + "REplied" + ":" + " " + ":" + " " + ":" + " ";
+                        String to_port = msg_break[0] + ":" + msg_break[1] + ":" + msg_break[2] + ":" + "Replied" + ":" + " " + ":" + " " + ":" + " ";
                         ;
                         to_server.writeUTF(to_port);
                         Log.d("in if 2", to_port);
